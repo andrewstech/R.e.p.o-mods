@@ -38,6 +38,9 @@ mcs -target:library -langversion:latest \
   -r:"$MANAGED/UnityEngine.UnityWebRequestAudioModule.dll" \
   src/REPOSoundboard/REPOSoundboard.cs
 
+# Fetch and verify the official x64 Windows runtime; do not commit vendor binaries.
+python3 scripts/bundle_logitech_sdk.py "$OUT/REPOPeripheralLighting/LogitechLedEnginesWrapper.dll"
+
 if [[ ! -f "$OUT/REPOSoundboard/sounds/sample_beep.wav" ]]; then
   python3 scripts/make_sample_beep.py "$OUT/REPOSoundboard/sounds/sample_beep.wav"
 fi

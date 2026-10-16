@@ -4,37 +4,37 @@ Adds dynamic peripheral RGB lighting to R.E.P.O through BepInEx.
 
 ## Current backend
 
-- Logitech Gaming LED SDK / G HUB / LGS via `LogitechLedEnginesWrapper.dll`
+- Logitech Gaming LED SDK / G HUB / LGS via bundled `LogitechLedEnginesWrapper.dll`
 - Whole-device color
 - Logitech mouse zones when available
 - Logitech per-key keyboard bitmap when available
 
 ## Effects
 
-- Idle: blue
-- Damage/death/low health: red
-- Healing: green pulse
-- Valuable discovery / value update / shop initialize: amber pulse
-- WASD/space highlighted cyan on per-key keyboards
-- Number row shows health: green lit keys, red missing keys
+- Idle: gently breathing blue (optional)
+- Damage/death/low health: red with adjustable intensity and fade
+- Healing: green with adjustable fade
+- Valuable discovery / value update / shop initialize / enemy hit: amber with adjustable fade
+- WASD/space highlighted cyan on per-key keyboards (toggleable)
+- Number row shows health: green lit keys, red missing keys (toggleable)
+- `F6` opens a scrollable in-game menu: effect toggles, intensity, breathing speed, fade times, brightness and tests; Save config persists changes.
 
 ## Install
 
-This build is already installed at:
+Copy the entire `mods/REPOPeripheralLighting/` folder to `BepInEx/plugins/` in your game installation.
 
-`/root/games/repo/BepInEx/plugins/REPOPeripheralLighting.dll`
+Required for Logitech lighting on Windows:
 
-Required for Logitech lighting on Windows/Proton:
-
-1. Install/run Logitech G HUB or Logitech Gaming Software in the same Windows/Proton environment that runs the game.
-2. Put Logitech's x64 `LogitechLedEnginesWrapper.dll` beside `REPO.exe` if G HUB/LGS does not expose it globally to the game.
-3. Start the game once so BepInEx creates config/log files.
+1. Install/run Logitech G HUB or Logitech Gaming Software in the same Windows environment that runs the game.
+2. Copy the entire `mods/REPOPeripheralLighting/` folder into `BepInEx/plugins/`; it includes both `REPOPeripheralLighting.dll` and the x64 `LogitechLedEnginesWrapper.dll` from Logitech LED SDK 9.00. The mod explicitly loads the DLL from its own directory.
+3. Install [Microsoft Visual C++ 2013 Redistributable (x64)](https://www.microsoft.com/en-us/download/details.aspx?id=40784) if you see Windows error 126: the Logitech DLL imports `MSVCR120.dll`, which that runtime provides. On Proton, install the runtime in the *game's prefix*, not just on the Linux host. Do not download `MSVCR120.dll` from third-party DLL sites.
+4. Start the game once so BepInEx creates config/log files. Logitech hardware integration is not tested here; Proton support is unverified.
 
 ## Config
 
 After first launch, edit:
 
-`/root/games/repo/BepInEx/config/andrew.repo.peripheral-lighting.cfg`
+`BepInEx/config/andrew.repo.peripheral-lighting.cfg`
 
 Useful settings:
 
@@ -47,9 +47,7 @@ Useful settings:
 
 ## Notes
 
-Built from source:
-
-`/root/.hermes/profiles/devteck/cache/scratch/REPOPeripheralLighting.cs`
+Built from `src/REPOPeripheralLighting/REPOPeripheralLighting.cs` via `./build.sh`.
 
 REA evidence used:
 

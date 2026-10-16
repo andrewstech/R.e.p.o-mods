@@ -20,19 +20,29 @@ namespace Andrew.REPO.PeripheralLighting
         private ConfigEntry<bool> modEnabled;
         private ConfigEntry<bool> perKeyKeyboard;
         private ConfigEntry<bool> healthKeys;
+        private ConfigEntry<bool> movementKeys;
         private ConfigEntry<bool> mouseZones;
         private ConfigEntry<float> brightness;
         private ConfigEntry<float> smoothing;
         private ConfigEntry<float> lowHealthThreshold;
         private ConfigEntry<float> dangerDecaySeconds;
         private ConfigEntry<float> treasureFlashSeconds;
+        private ConfigEntry<float> healFlashSeconds;
+        private ConfigEntry<float> effectIntensity;
+        private ConfigEntry<float> idleBreathSpeed;
+        private ConfigEntry<bool> idleBreathing;
+        private ConfigEntry<bool> dangerEffects;
+        private ConfigEntry<bool> healEffects;
+        private ConfigEntry<bool> treasureEffects;
         private ConfigEntry<string> idleColor;
         private ConfigEntry<string> dangerColor;
         private ConfigEntry<string> healColor;
         private ConfigEntry<string> treasureColor;
         private ConfigEntry<KeyboardShortcut> uiKey;
         private bool showUi;
-        private Rect uiRect = new Rect(30f, 30f, 360f, 430f);
+        private bool lightingSuspended;
+        private Rect uiRect = new Rect(30f, 30f, 390f, 560f);
+        private Vector2 uiScroll;
         private Color current;
 
         private void Awake()
@@ -41,12 +51,20 @@ namespace Andrew.REPO.PeripheralLighting
             modEnabled = Config.Bind("General", "Enabled", true, "Enable peripheral lighting integration.");
             perKeyKeyboard = Config.Bind("Logitech", "PerKeyKeyboard", true, "Use per-key bitmap effects on supported Logitech keyboards.");
             healthKeys = Config.Bind("Effects", "HealthNumberKeys", true, "Show health as green/red number-row keys on per-key keyboards.");
+            movementKeys = Config.Bind("Effects", "MovementKeys", true, "Highlight WASD and space on per-key keyboards.");
             mouseZones = Config.Bind("Logitech", "MouseZones", true, "Also set Logitech mouse target zones when available.");
             brightness = Config.Bind("General", "Brightness", 0.65f, new ConfigDescription("Global brightness multiplier.", new AcceptableValueRange<float>(0f, 1f)));
             smoothing = Config.Bind("General", "Smoothing", 10f, new ConfigDescription("Color smoothing speed.", new AcceptableValueRange<float>(0f, 40f)));
             lowHealthThreshold = Config.Bind("Effects", "LowHealthThreshold", 0.35f, new ConfigDescription("Health ratio where idle lighting blends toward danger.", new AcceptableValueRange<float>(0.05f, 0.9f)));
             dangerDecaySeconds = Config.Bind("Effects", "DangerFlashSeconds", 1.8f, new ConfigDescription("Seconds for damage/death flashes to fade.", new AcceptableValueRange<float>(0.1f, 10f)));
             treasureFlashSeconds = Config.Bind("Effects", "TreasureFlashSeconds", 1.1f, new ConfigDescription("Seconds for valuable/discovery flashes to fade.", new AcceptableValueRange<float>(0.1f, 10f)));
+            healFlashSeconds = Config.Bind("Effects", "HealFlashSeconds", 1.2f, new ConfigDescription("Seconds for heal flashes to fade.", new AcceptableValueRange<float>(0.1f, 10f)));
+            effectIntensity = Config.Bind("Effects", "Intensity", 1f, new ConfigDescription("Strength of event lighting effects.", new AcceptableValueRange<float>(0f, 1f)));
+            idleBreathing = Config.Bind("Effects", "IdleBreathing", true, "Gently pulse idle lighting.");
+            idleBreathSpeed = Config.Bind("Effects", "IdleBreathSpeed", 0.35f, new ConfigDescription("Idle breathing cycles per second.", new AcceptableValueRange<float>(0.05f, 2f)));
+            dangerEffects = Config.Bind("Effects", "Danger", true, "Damage, death and low-health effects.");
+            healEffects = Config.Bind("Effects", "Heal", true, "Healing effects.");
+            treasureEffects = Config.Bind("Effects", "Treasure", true, "Valuable, shop and enemy-hit effects.");
             idleColor = Config.Bind("Colors", "Idle", "20,60,100", "RGB 0-255.");
             dangerColor = Config.Bind("Colors", "Danger", "255,0,0", "RGB 0-255.");
             healColor = Config.Bind("Colors", "Heal", "0,255,80", "RGB 0-255.");
@@ -55,7 +73,7 @@ namespace Andrew.REPO.PeripheralLighting
 
             state = new LightingState();
             current = ParseColor(idleColor.Value, new Color(0.2f, 0.6f, 1f));
-            logitech = new LogitechLighting(Logger, perKeyKeyboard.Value, mouseZones.Value);
+            logitech = new LogitechLighting(Logger);
             logitech.Initialize();
 
             harmony = new Harmony("andrew.repo.peripheral-lighting");
@@ -95,9 +113,20 @@ namespace Andrew.REPO.PeripheralLighting
         private void Update()
         {
             if (uiKey.Value.IsDown()) showUi = !showUi;
-            if (!modEnabled.Value || logitech == null || !logitech.Available) return;
+            if (logitech == null || !logitech.Available) return;
+            if (!modEnabled.Value)
+            {
+                if (!lightingSuspended)
+                {
+                    logitech.Suspend();
+                    lightingSuspended = true;
+                }
+                return;
+            }
+            if (lightingSuspended) logitech.Resume();
+            lightingSuspended = false;
 
-            state.Tick(Time.unscaledDeltaTime, dangerDecaySeconds.Value, treasureFlashSeconds.Value);
+            state.Tick(Time.unscaledDeltaTime, dangerDecaySeconds.Value, healFlashSeconds.Value, treasureFlashSeconds.Value);
             RefreshLocalPlayerHealth();
 
             Color idle = ParseColor(idleColor.Value, new Color(0.2f, 0.6f, 1f));
@@ -106,24 +135,27 @@ namespace Andrew.REPO.PeripheralLighting
             Color treasure = ParseColor(treasureColor.Value, new Color(1f, 0.55f, 0f));
 
             Color target = idle;
-            if (state.HealthKnown && state.HealthMax > 0)
+            if (idleBreathing.Value)
+                target *= 0.8f + 0.2f * (0.5f + 0.5f * Mathf.Sin(Time.unscaledTime * idleBreathSpeed.Value * 2f * Mathf.PI));
+            if (dangerEffects.Value && state.HealthKnown && state.HealthMax > 0)
             {
                 float ratio = Mathf.Clamp01((float)state.Health / state.HealthMax);
                 if (ratio < lowHealthThreshold.Value)
                 {
                     float t = 1f - Mathf.Clamp01(ratio / lowHealthThreshold.Value);
-                    target = Color.Lerp(target, danger, t * 0.85f);
+                    target = Color.Lerp(target, danger, t * 0.85f * effectIntensity.Value);
                 }
             }
-            target = Color.Lerp(target, treasure, state.TreasurePulse);
-            target = Color.Lerp(target, heal, state.HealPulse);
-            target = Color.Lerp(target, danger, state.DangerPulse);
+            if (treasureEffects.Value) target = Color.Lerp(target, treasure, state.TreasurePulse * effectIntensity.Value);
+            if (healEffects.Value) target = Color.Lerp(target, heal, state.HealPulse * effectIntensity.Value);
+            if (dangerEffects.Value) target = Color.Lerp(target, danger, state.DangerPulse * effectIntensity.Value);
 
             target *= Mathf.Clamp01(brightness.Value);
             target.a = 1f;
             float lerp = smoothing.Value <= 0 ? 1f : Mathf.Clamp01(Time.unscaledDeltaTime * smoothing.Value);
             current = Color.Lerp(current, target, lerp);
-            logitech.Apply(current, state.HealthKnown ? state.Health : -1, state.HealthKnown ? state.HealthMax : -1, healthKeys.Value);
+            logitech.Apply(current, state.HealthKnown ? state.Health : -1, state.HealthKnown ? state.HealthMax : -1,
+                healthKeys.Value, movementKeys.Value, perKeyKeyboard.Value, mouseZones.Value, Mathf.Clamp01(brightness.Value));
         }
 
         private void RefreshLocalPlayerHealth()
@@ -187,11 +219,28 @@ namespace Andrew.REPO.PeripheralLighting
 
         private void DrawUi(int id)
         {
+            uiScroll = GUILayout.BeginScrollView(uiScroll, GUILayout.Height(510f));
             GUILayout.Label("Toggle: " + uiKey.Value);
             modEnabled.Value = GUILayout.Toggle(modEnabled.Value, "Enabled");
             perKeyKeyboard.Value = GUILayout.Toggle(perKeyKeyboard.Value, "Logitech per-key keyboard");
             mouseZones.Value = GUILayout.Toggle(mouseZones.Value, "Logitech mouse zones");
             healthKeys.Value = GUILayout.Toggle(healthKeys.Value, "Health on number row");
+            movementKeys.Value = GUILayout.Toggle(movementKeys.Value, "Highlight WASD + space");
+            GUILayout.Label("Effects");
+            idleBreathing.Value = GUILayout.Toggle(idleBreathing.Value, "Idle breathing");
+            dangerEffects.Value = GUILayout.Toggle(dangerEffects.Value, "Damage / death / low health");
+            healEffects.Value = GUILayout.Toggle(healEffects.Value, "Healing");
+            treasureEffects.Value = GUILayout.Toggle(treasureEffects.Value, "Valuables / shop / enemy hit");
+            GUILayout.Label("Effect intensity: " + effectIntensity.Value.ToString("0.00"));
+            effectIntensity.Value = GUILayout.HorizontalSlider(effectIntensity.Value, 0f, 1f);
+            GUILayout.Label("Idle breath cycles/sec: " + idleBreathSpeed.Value.ToString("0.00"));
+            idleBreathSpeed.Value = GUILayout.HorizontalSlider(idleBreathSpeed.Value, 0.05f, 2f);
+            GUILayout.Label("Damage fade (sec): " + dangerDecaySeconds.Value.ToString("0.0"));
+            dangerDecaySeconds.Value = GUILayout.HorizontalSlider(dangerDecaySeconds.Value, 0.1f, 10f);
+            GUILayout.Label("Heal fade (sec): " + healFlashSeconds.Value.ToString("0.0"));
+            healFlashSeconds.Value = GUILayout.HorizontalSlider(healFlashSeconds.Value, 0.1f, 10f);
+            GUILayout.Label("Treasure fade (sec): " + treasureFlashSeconds.Value.ToString("0.0"));
+            treasureFlashSeconds.Value = GUILayout.HorizontalSlider(treasureFlashSeconds.Value, 0.1f, 10f);
             GUILayout.Label("Brightness: " + brightness.Value.ToString("0.00"));
             brightness.Value = GUILayout.HorizontalSlider(brightness.Value, 0f, 1f);
             GUILayout.Label("Smoothing: " + smoothing.Value.ToString("0.0"));
@@ -207,6 +256,7 @@ namespace Andrew.REPO.PeripheralLighting
             if (GUILayout.Button("Test treasure")) state.TreasurePulse = 1f;
             GUILayout.EndHorizontal();
             if (GUILayout.Button("Save config")) Config.Save();
+            GUILayout.EndScrollView();
             GUI.DragWindow();
         }
 
@@ -250,10 +300,10 @@ namespace Andrew.REPO.PeripheralLighting
             public float DangerPulse;
             public float HealPulse;
             public float TreasurePulse;
-            public void Tick(float dt, float dangerSeconds, float treasureSeconds)
+            public void Tick(float dt, float dangerSeconds, float healSeconds, float treasureSeconds)
             {
                 DangerPulse = Mathf.Max(0f, DangerPulse - dt / Mathf.Max(0.01f, dangerSeconds));
-                HealPulse = Mathf.Max(0f, HealPulse - dt / 1.2f);
+                HealPulse = Mathf.Max(0f, HealPulse - dt / Mathf.Max(0.01f, healSeconds));
                 TreasurePulse = Mathf.Max(0f, TreasurePulse - dt / Mathf.Max(0.01f, treasureSeconds));
             }
         }
@@ -270,24 +320,39 @@ namespace Andrew.REPO.PeripheralLighting
     internal sealed class LogitechLighting
     {
         private readonly BepInEx.Logging.ManualLogSource log;
-        private readonly bool perKey;
-        private readonly bool zones;
         private bool initialized;
         private float nextApply;
         private readonly byte[] bitmap = new byte[21 * 6 * 4];
         public bool Available { get { return initialized; } }
 
-        public LogitechLighting(BepInEx.Logging.ManualLogSource log, bool perKey, bool zones)
+        public LogitechLighting(BepInEx.Logging.ManualLogSource log)
         {
             this.log = log;
-            this.perKey = perKey;
-            this.zones = zones;
         }
 
         public void Initialize()
         {
             try
             {
+                // Unity/Mono does not reliably probe nested BepInEx plugin directories
+                // for native DLLs. Load our bundled copy by absolute path first.
+                if (Environment.OSVersion.Platform == PlatformID.Win32NT)
+                {
+                    string path = Path.Combine(Path.GetDirectoryName(typeof(LogitechLighting).Assembly.Location), "LogitechLedEnginesWrapper.dll");
+                    if (!File.Exists(path))
+                    {
+                        log.LogWarning("Bundled Logitech LED SDK DLL missing: " + path);
+                        return;
+                    }
+                    if (Native.LoadLibrary(path) == IntPtr.Zero)
+                    {
+                        int error = Marshal.GetLastWin32Error();
+                        log.LogWarning("Cannot load Logitech LED SDK DLL: " + path + " (Windows error " + error + "). " +
+                            (error == 126 ? "DLL exists, but a dependency may be missing: install Microsoft's Visual C++ 2013 Redistributable (x64) for MSVCR120.dll in the game environment. " : "") +
+                            "G HUB/LGS must also be running for lighting to initialize.");
+                        return;
+                    }
+                }
                 initialized = Native.LogiLedInitWithName("R.E.P.O Peripheral Lighting");
                 if (!initialized) initialized = Native.LogiLedInit();
                 if (initialized)
@@ -308,7 +373,7 @@ namespace Andrew.REPO.PeripheralLighting
             }
         }
 
-        public void Apply(Color c, int health, int maxHealth, bool showHealthKeys)
+        public void Apply(Color c, int health, int maxHealth, bool showHealthKeys, bool showMovementKeys, bool perKey, bool zones, float brightness)
         {
             if (!initialized) return;
             if (Time.unscaledTime < nextApply) return;
@@ -324,40 +389,45 @@ namespace Andrew.REPO.PeripheralLighting
             if (perKey)
             {
                 FillBitmap(r, g, b);
-                PaintWasd(0, 80, 100);
-                if (showHealthKeys && health >= 0 && maxHealth > 0) PaintHealth(health, maxHealth);
+                if (showMovementKeys) PaintWasd(brightness);
+                if (showHealthKeys && health >= 0 && maxHealth > 0) PaintHealth(health, maxHealth, brightness);
                 Try(() => Native.LogiLedSetLightingFromBitmap(bitmap));
             }
         }
 
         private void FillBitmap(int r, int g, int b)
         {
+            byte red = (byte)Mathf.RoundToInt(r * 255f / 100f);
+            byte green = (byte)Mathf.RoundToInt(g * 255f / 100f);
+            byte blue = (byte)Mathf.RoundToInt(b * 255f / 100f);
             for (int i = 0; i < bitmap.Length; i += 4)
             {
-                bitmap[i] = (byte)b;
-                bitmap[i + 1] = (byte)g;
-                bitmap[i + 2] = (byte)r;
+                bitmap[i] = blue;
+                bitmap[i + 1] = green;
+                bitmap[i + 2] = red;
                 bitmap[i + 3] = 255;
             }
         }
 
-        private void PaintWasd(int r, int g, int b)
+        private void PaintWasd(float brightness)
         {
-            SetKey(4, 1, r, g, b); // W
-            SetKey(3, 2, r, g, b); // A
-            SetKey(4, 2, r, g, b); // S
-            SetKey(5, 2, r, g, b); // D
-            SetKey(9, 5, r, g, b); // Space-ish
+            int g = Mathf.RoundToInt(204 * brightness), b = Mathf.RoundToInt(255 * brightness);
+            SetKey(2, 2, 0, g, b); // W
+            SetKey(1, 3, 0, g, b); // A
+            SetKey(2, 3, 0, g, b); // S
+            SetKey(3, 3, 0, g, b); // D
+            SetKey(5, 5, 0, g, b); // Space
         }
 
-        private void PaintHealth(int health, int maxHealth)
+        private void PaintHealth(int health, int maxHealth, float brightness)
         {
             float ratio = Mathf.Clamp01((float)health / Mathf.Max(1, maxHealth));
             int lit = Mathf.Clamp(Mathf.CeilToInt(ratio * 10f), 0, 10);
+            int value = Mathf.RoundToInt(255 * brightness);
             for (int i = 0; i < 10; i++)
             {
-                if (i < lit) SetKey(i + 1, 0, 0, 100, 0);
-                else SetKey(i + 1, 0, 100, 0, 0);
+                if (i < lit) SetKey(i + 1, 1, 0, value, 0);
+                else SetKey(i + 1, 1, value, 0, 0);
             }
         }
 
@@ -369,6 +439,17 @@ namespace Andrew.REPO.PeripheralLighting
             bitmap[i + 1] = (byte)g;
             bitmap[i + 2] = (byte)r;
             bitmap[i + 3] = 255;
+        }
+
+        public void Resume()
+        {
+            if (initialized) Try(() => Native.LogiLedSaveCurrentLighting());
+        }
+
+        public void Suspend()
+        {
+            if (!initialized) return;
+            Try(() => Native.LogiLedRestoreLighting());
         }
 
         public void Shutdown()
@@ -385,6 +466,9 @@ namespace Andrew.REPO.PeripheralLighting
 
     internal static class Native
     {
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        public static extern IntPtr LoadLibrary(string fileName);
+
         [DllImport("LogitechLedEnginesWrapper", CallingConvention = CallingConvention.Cdecl, EntryPoint = "LogiLedInit")]
         [return: MarshalAs(UnmanagedType.I1)] public static extern bool LogiLedInit();
         [DllImport("LogitechLedEnginesWrapper", CallingConvention = CallingConvention.Cdecl, EntryPoint = "LogiLedInitWithName")]
